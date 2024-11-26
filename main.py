@@ -50,6 +50,12 @@ class CreateTableEntries(BaseModel):
     name: str
     json_value: Json
 
+class EditEntryRequest(BaseModel):
+    db: str
+    table: str
+    id: int
+    data: Dict[str, Any]
+
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
@@ -607,7 +613,7 @@ def get_table_list(
     return tables_with_columns
 
 
-@app.post("/database/entrie/add")
+@app.post("/database/entry/add")
 def add_entrie(
     session: SessionDep,
     payload: dict = Depends(verify_token),
@@ -686,4 +692,95 @@ def add_entrie(
         "database": db_name,
         "table": table_name,
         "data": body.data,
+    }
+
+@app.post("/database/entry/edit")
+def edit_entry(
+    session: SessionDep,
+    payload: dict = Depends(verify_token),
+    body: EditEntryRequest = Body(...),
+):
+    """
+    Edit an entry in a table based on its primary key (ID).
+
+    Args:
+        session (SessionDep): Database session dependency.
+        payload (dict): User authentication payload.
+        body (EditEntryRequest): Contains the database name, table name, ID, and data to update.
+
+    Returns:
+        A success message if the entry is updated.
+    """
+    db_name = body.db
+    table_name = body.table
+    entry_id = body.id
+    user_id = payload["id"]
+
+    # Check if the database is registered in the system
+    db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
+    if not db_entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database {db_name} is not registered in the system.",
+        )
+
+    # Check if the user is linked to the database
+    db_link = session.exec(
+        select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
+    ).first()
+    if not db_link:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
+        )
+
+    # Path to the database file
+    db_user_dir = "./db_user"
+    db_path = os.path.join(db_user_dir, f"{db_name}.db")
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database file {db_name}.db does not exist.",
+        )
+
+    # Update the entry in the specified table
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Check if the entry exists
+        cursor.execute(f"SELECT * FROM {table_name} WHERE id = ?", (entry_id,))
+        existing_entry = cursor.fetchone()
+        if not existing_entry:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Entry with ID {entry_id} does not exist in table {table_name}.",
+            )
+
+        # Build SQL dynamically for the UPDATE statement
+        set_clause = ", ".join([f"{key} = ?" for key in body.data.keys()])
+        update_sql = f"UPDATE {table_name} SET {set_clause} WHERE id = ?"
+
+        # Execute the SQL command
+        cursor.execute(update_sql, (*body.data.values(), entry_id))
+        conn.commit()
+        conn.close()
+
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error interacting with table {table_name}: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}",
+        )
+
+    return {
+        "message": "Entry updated successfully",
+        "database": db_name,
+        "table": table_name,
+        "id": entry_id,
+        "updated_data": body.data,
     }
