@@ -163,6 +163,77 @@ def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], session: S
     )
 
     return {"token": access_token}
+    return {"token": access_token}
+
+@app.post("/create/database")
+def create_db(
+    session: SessionDep,
+    payload: dict = Depends(verify_token),
+    body: CreateDbRequest = Body(...)
+):
+    if payload["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="UNAUTHORIZED: You do not have permission to create ANY database. Ask an Admin to do so.",
+        )
+    user_id = payload["id"]
+    db_name = body.db_name
+
+    if not db_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database name must be provided",
+        )
+
+    # Check if the database name already exists in the Db table
+    existing_db = session.exec(select(Db).where(Db.name == db_name)).first()
+    if existing_db:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database name already exists",
+        )
+
+    # Ensure the ./db_user directory exists
+    db_user_dir = "./db_user"
+    os.makedirs(db_user_dir, exist_ok=True)
+
+    # Path to the new SQLite file
+    new_db_path = os.path.join(db_user_dir, f"{db_name}.db")
+
+    # Add entry in Db table with the file path
+    new_db = Db(name=db_name, creator=user_id, path=new_db_path)
+    session.add(new_db)
+    session.commit()
+    session.refresh(new_db)
+
+    # Create a new SQLite file for the schema
+    try:
+        conn = sqlite3.connect(new_db_path)
+        conn.execute("CREATE TABLE example_table (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.close()
+    except Exception as e:
+        session.delete(new_db)  # Rollback Db entry if file creation fails
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating new SQLite file: {str(e)}"
+        )
+
+    # Link the creator user to the new database
+    db_link = DbLink(user_id=user_id, db_id=new_db.id)
+    session.add(db_link)
+    session.commit()
+
+    return {
+        "message": "New SQLite database created successfully",
+        "database": {
+            "id": new_db.id,
+            "name": new_db.name,
+            "creator": new_db.creator,
+            "file_path": new_db_path
+        }
+    }
+
 
 @app.post("/create/table")
 def create_table_in_db(
