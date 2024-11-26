@@ -1,3 +1,6 @@
+import random
+import string
+
 from fastapi import Depends, FastAPI, HTTPException, status, Request, Body
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -39,6 +42,9 @@ class CreateTableRequest(BaseModel):
     db_name: str
     table_name: str
     columns: dict
+
+class CreateUserRequest(BaseModel):
+    name: str
 
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -163,7 +169,71 @@ def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], session: S
     )
 
     return {"token": access_token}
-    return {"token": access_token}
+
+
+from pydantic import BaseModel
+import random
+import string
+
+class CreateUserRequest(BaseModel):
+    name: str
+    role: str
+
+@app.post("/create/user")
+def create_user(
+    session: SessionDep,
+    payload: dict = Depends(verify_token),
+    body: CreateUserRequest = Body(...)
+):
+    # Only admins can create users
+    if payload["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="UNAUTHORIZED: You do not have permission to create users. Ask an Admin to do so.",
+        )
+
+    user_name = body.name
+    user_role = body.role
+
+    # Check if the user already exists
+    existing_user = session.exec(select(User).where(User.name == user_name)).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User '{user_name}' already exists.",
+        )
+
+    # Validate the role
+    valid_roles = ['admin', 'user', 'viewer']
+    if user_role not in valid_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Role '{user_role}' does not exist. Valid roles are: {', '.join(valid_roles)}.",
+        )
+
+    password = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    salt = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    hashed_password = pwd_context.hash(password + salt)
+
+    print(f"Creating user: password={password}, salt={salt}, hashed={hashed_password}")
+
+    new_user = User(name=user_name, hash=hashed_password, salt=salt, role=user_role)
+    session.add(new_user)
+    session.commit()
+
+    # Return the plaintext password in the response
+    return {
+        "message": "New user created successfully",
+        "user": {
+            "id": new_user.id,
+            "name": new_user.name,
+            "role": new_user.role,
+            "password": password  # Return the plaintext password here
+        }
+    }
+
+
+
 
 @app.post("/create/database")
 def create_db(
