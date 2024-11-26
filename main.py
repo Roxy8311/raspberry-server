@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from typing import Annotated, Dict, List, Any
 from datetime import datetime, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, Json
 import os
 import sqlite3
 
@@ -45,6 +45,10 @@ class CreateTableRequest(BaseModel):
 
 class CreateUserRequest(BaseModel):
     name: str
+
+class CreateTableEntries(BaseModel):
+    name: str
+    json_value: Json
 
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -141,6 +145,8 @@ def get_user_database_list(user_id: int, user_role: str, session: SessionDep):
     return database_list
 
 
+
+
 @app.get("/database")
 def get_database_user(session: SessionDep, payload: dict = Depends(verify_token)):
     user_id = payload["id"]
@@ -179,6 +185,72 @@ class EditUserPassword(BaseModel):
     name: str
     old_psk: str
     new_psk: str
+
+class AddElementRequest(BaseModel):
+    db: str
+    table: str
+    data: Dict[str, Any]
+
+@app.post("/database/add_element")
+def add_element_to_table(
+    body: AddElementRequest = Body(...),
+):
+    """
+    Add an element to a table in a specified SQLite database.
+
+    Args:
+        body (AddElementRequest): Contains the database name, table name, and data to insert.
+
+    Returns:
+        A success message if the element is added.
+    """
+    db_user_dir = "./db_user"
+    db_path = os.path.join(db_user_dir, f"{body.db_name}.db")
+
+    # Check if the database file exists
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database {body.db_name} does not exist.",
+        )
+
+    # Validate input data
+    if not body.data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No data provided for insertion.",
+        )
+
+    # Build the SQL INSERT statement dynamically
+    columns = ", ".join(body.data.keys())
+    placeholders = ", ".join(["?" for _ in body.data.values()])
+    insert_sql = f"INSERT INTO {body.table_name} ({columns}) VALUES ({placeholders})"
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Execute the SQL command with the provided data
+        cursor.execute(insert_sql, tuple(body.data.values()))
+        conn.commit()
+        conn.close()
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error interacting with table {body.table_name}: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}",
+        )
+
+    return {
+        "message": "Element added successfully",
+        "database": body.db_name,
+        "table": body.table_name,
+        "data": body.data
+    }
 
 @app.post("/edit/password")
 def change_password(
@@ -535,6 +607,83 @@ def get_table_list(
     return tables_with_columns
 
 
+@app.post("/database/entrie/add")
+def add_entrie(
+    session: SessionDep,
+    payload: dict = Depends(verify_token),
+    body: AddElementRequest = Body(...),
+):
+    """
+    Add an entry to a table in a specified SQLite database after verifying user access.
 
+    Args:
+        session (SessionDep): Database session dependency.
+        payload (dict): User authentication payload.
+        body (AddElementRequest): Contains the database name, table name, and data to insert.
 
+    Returns:
+        A success message if the entry is added.
+    """
+    db_name = body.db
+    table_name = body.table
+    user_id = payload["id"]
 
+    # Check if the database is registered in the system
+    db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
+    if not db_entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database {db_name} is not registered in the system.",
+        )
+
+    # Check if the user is linked to the database
+    db_link = session.exec(
+        select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
+    ).first()
+    if not db_link:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
+        )
+
+    # Path to the database file
+    db_user_dir = "./db_user"
+    db_path = os.path.join(db_user_dir, f"{db_name}.db")
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database file {db_name}.db does not exist.",
+        )
+
+    # Insert the data into the specified table
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Build SQL dynamically for the INSERT statement
+        columns = ", ".join(body.data.keys())
+        placeholders = ", ".join(["?" for _ in body.data.values()])
+        insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+
+        # Execute the SQL command
+        cursor.execute(insert_sql, tuple(body.data.values()))
+        conn.commit()
+        conn.close()
+
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error interacting with table {table_name}: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}",
+        )
+
+    return {
+        "message": "Entry added successfully",
+        "database": db_name,
+        "table": table_name,
+        "data": body.data,
+    }
