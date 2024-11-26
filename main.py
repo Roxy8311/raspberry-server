@@ -171,13 +171,60 @@ def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], session: S
     return {"token": access_token}
 
 
-from pydantic import BaseModel
-import random
-import string
-
 class CreateUserRequest(BaseModel):
     name: str
     role: str
+
+class EditUserPassword(BaseModel):
+    name: str
+    old_psk: str
+    new_psk: str
+
+@app.post("/edit/password")
+def change_password(
+    session: SessionDep,
+    body: EditUserPassword = Body(...),
+):
+    """
+    Change a user's password after verifying the old password.
+
+    Args:
+        session (SessionDep): Database session dependency.
+        body (EditUserPassword): Contains username, old password, and new password.
+
+    Returns:
+        A success message if the password is updated.
+    """
+    # Fetch the user from the database
+    statement = select(User).where(User.name == body.name)
+    user = session.exec(statement).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    if not verify_password(body.old_psk, user.hash, user.salt):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid old password.",
+        )
+
+    new_hashed_password = pwd_context.hash(body.new_psk + user.salt)
+
+    user.hash = new_hashed_password
+    session.add(user)
+    session.commit()
+
+    return {
+        "message": "Password updated successfully",
+        "user": {
+            "id": user.id,
+            "name": user.name
+        }
+    }
+
 
 @app.post("/create/user")
 def create_user(
