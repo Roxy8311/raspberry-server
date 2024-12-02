@@ -196,6 +196,14 @@ class DeleteElementRequest(BaseModel):
     table: str
     id: int
 
+class EditUserRoleRequest(BaseModel):
+    name: str
+    role: str
+
+class LinkUserDatabaseRequest(BaseModel):
+    name: str
+    database: str
+
 @app.post("/database/add_element")
 def add_element_to_table(
     body: AddElementRequest = Body(...),
@@ -275,6 +283,153 @@ def change_password(
         "user": {
             "id": user.id,
             "name": user.name
+        }
+    }
+
+@app.post("/role/user")
+def edit_user(
+    session: SessionDep,
+    payload: dict = Depends(verify_token),
+    body: EditUserRoleRequest = Body(...)
+):
+    if payload["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="UNAUTHORIZED: You do not have permission to change users' roles. Ask an Admin to do so.",
+        )
+
+    user_role = body.role
+    user_name = body.name
+
+    user = session.exec(select(User).where(User.name == user_name)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    valid_roles = ['admin', 'user', 'viewer']
+    if user_role not in valid_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Role '{user_role}' does not exist. Valid roles are: {', '.join(valid_roles)}.",
+        )
+
+    user.role = user_role
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    return {
+        "message": "User role updated successfully",
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "role": user.role
+        }
+    }
+
+@app.delete("/database/user")
+def delete_linkDb(
+        session: SessionDep,
+        payload: dict = Depends(verify_token),
+        body: LinkUserDatabaseRequest = Body(...)
+):
+    if payload["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="UNAUTHORIZED: You do not have permission to link users to databases. Ask an Admin to do so.",
+        )
+    user_name = body.name
+    database_name = body.database
+
+    existing_user = session.exec(select(User).where(User.name == user_name)).first()
+    if not existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User '{user_name}' already exists.",
+        )
+
+    existing_db = session.exec(select(Db).where(Db.name == database_name)).first()
+    if not existing_db:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database '{database_name}' does not exist.",
+        )
+
+    existing_dbLink = session.exec(select(DbLink).where(DbLink.db_id == existing_db.id).where(DbLink.user_id == existing_user.id)).first()
+    if not existing_dbLink:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database '{database_name}' is not linked to '{user_name}'",
+        )
+
+    session.delete(existing_db)
+    session.commit()
+
+    return {
+        "message": "Link Deleted successfully",
+        "user": {
+            "id": existing_user.id,
+            "name": existing_user.name,
+            "role": existing_user.role,
+        },
+        "database": {
+            "id": existing_db.id,
+            "name": existing_db.name
+        }
+    }
+
+
+@app.post("/database/user")
+def link_user_database(
+    session: SessionDep,
+    payload: dict = Depends(verify_token),
+    body: LinkUserDatabaseRequest = Body(...)
+):
+    if payload["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="UNAUTHORIZED: You do not have permission to link users to databases. Ask an Admin to do so.",
+        )
+    user_name = body.name
+    database_name = body.database
+
+    existing_user = session.exec(select(User).where(User.name == user_name)).first()
+    if not existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User '{user_name}' already exists.",
+        )
+
+    existing_db = session.exec(select(Db).where(Db.name == database_name)).first()
+    if not existing_db:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database '{database_name}' does not exist.",
+        )
+
+    existing_dbLink = session.exec(select(DbLink).where(DbLink.db_id == existing_db.id).where(DbLink.user_id == existing_user.id)).first()
+    if existing_dbLink:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Database '{database_name}' already linked to '{user_name}'",
+        )
+
+    new_dbLink = DbLink(user_id= existing_user.id, db_id= existing_db.id)
+    session.add(new_dbLink)
+    session.commit()
+
+    return {
+        "message": "New link created successfully",
+        "user": {
+            "id": existing_user.id,
+            "name": existing_user.name,
+            "role": existing_user.role,
+        },
+        "database": {
+            "id": existing_db.id,
+            "name": existing_db.name
         }
     }
 

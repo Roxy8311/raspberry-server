@@ -93,6 +93,9 @@ Access the API documentation at `http://127.0.0.1:8000/docs`.
 
 - `POST /create/user` - Create a new user (Admin only).
 - `POST /edit/password` - Change the password of an existing user.
+- `POST /role/user` - Change the role of an existing user (Admin only).
+- `DELETE /database/user` - Delete the link between a user and a database (Admin only).
+- `POST /database/user` - Create a new link between a user and a database (Admin only).
 
 ### Database Management
 
@@ -194,6 +197,82 @@ Change the password for an existing user.
   "user": {
     "id": 1,
     "name": "user"
+  }
+}
+```
+
+#### `POST /role/user`
+Change the role for an existing user (Viewer, User or Admin).
+
+**Request Body**:
+```json
+{
+  "name": "user",
+  "role": "user"
+}
+```
+
+**Response**:
+```json
+{
+  "message": "User role updated successfully",
+  "user": {
+    "id": 1,
+    "name": "user",
+    "role": "user"
+  }
+}
+```
+
+#### `DELETE /database/user`
+Delete the link between a user and a database.
+
+**Request Body**:
+```json
+{
+  "name": "user",
+  "database": "database"
+}
+```
+
+**Response**:
+```json
+{"message": "Link Deleted successfully",
+        "user": {
+            "id": 1,
+            "name": "user",
+            "role": "user"
+        },
+        "database": {
+            "id": 1,
+            "name": "database"
+        }
+}
+```
+
+#### `POST /database/user`
+Create a new link between a user and a database (Admin only).
+
+**Request Body**:
+```json
+{
+  "name": "user",
+  "database": "database"
+}
+```
+
+**Response**:
+```json
+{
+  "message": "Link Deleted successfully",
+  "user": {
+      "id": 1,
+      "name": "user",
+      "role": "user"
+  },
+  "database": {
+      "id": 1,
+      "name": "database"
   }
 }
 ```
