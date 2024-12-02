@@ -1,6 +1,5 @@
 import random
 import string
-
 from fastapi import Depends, FastAPI, HTTPException, status, Request, Body
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -11,6 +10,10 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel, Json
 import os
 import sqlite3
+
+SECRET_KEY = "}|>N>YArO9~Z)X?#2/0{e(6Z<T<)bmOZ'n5Z%#=|a?p[h~oZjbX}S|qevN$|io}"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 app = FastAPI()
 
@@ -74,14 +77,7 @@ def get_session():
     finally:
         db_session.close()
 
-
 SessionDep = Annotated[Session, Depends(get_session)]
-
-
-SECRET_KEY = "your_secret_key"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -96,19 +92,6 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
-    with Session(engine) as session:
-        test_user = User(
-            name="testuser",
-            hash=pwd_context.hash("testpassword" + "testsalt"),
-            salt="testsalt",
-            role="admin"
-        )
-        session.add(test_user)
-        session.commit()
 
 def extract_token(request: Request):
     """Extract the token directly from the Authorization header."""
@@ -220,21 +203,18 @@ def add_element_to_table(
     db_user_dir = "./db_user"
     db_path = os.path.join(db_user_dir, f"{body.db_name}.db")
 
-    # Check if the database file exists
     if not os.path.exists(db_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Database {body.db_name} does not exist.",
         )
 
-    # Validate input data
     if not body.data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No data provided for insertion.",
         )
 
-    # Build the SQL INSERT statement dynamically
     columns = ", ".join(body.data.keys())
     placeholders = ", ".join(["?" for _ in body.data.values()])
     insert_sql = f"INSERT INTO {body.table_name} ({columns}) VALUES ({placeholders})"
@@ -243,7 +223,6 @@ def add_element_to_table(
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Execute the SQL command with the provided data
         cursor.execute(insert_sql, tuple(body.data.values()))
         conn.commit()
         conn.close()
@@ -270,17 +249,6 @@ def change_password(
     session: SessionDep,
     body: EditUserPassword = Body(...),
 ):
-    """
-    Change a user's password after verifying the old password.
-
-    Args:
-        session (SessionDep): Database session dependency.
-        body (EditUserPassword): Contains username, old password, and new password.
-
-    Returns:
-        A success message if the password is updated.
-    """
-    # Fetch the user from the database
     statement = select(User).where(User.name == body.name)
     user = session.exec(statement).first()
 
@@ -317,7 +285,6 @@ def create_user(
     payload: dict = Depends(verify_token),
     body: CreateUserRequest = Body(...)
 ):
-    # Only admins can create users
     if payload["role"] != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -327,7 +294,6 @@ def create_user(
     user_name = body.name
     user_role = body.role
 
-    # Check if the user already exists
     existing_user = session.exec(select(User).where(User.name == user_name)).first()
     if existing_user:
         raise HTTPException(
@@ -335,7 +301,6 @@ def create_user(
             detail=f"User '{user_name}' already exists.",
         )
 
-    # Validate the role
     valid_roles = ['admin', 'user', 'viewer']
     if user_role not in valid_roles:
         raise HTTPException(
@@ -353,14 +318,13 @@ def create_user(
     session.add(new_user)
     session.commit()
 
-    # Return the plaintext password in the response
     return {
         "message": "New user created successfully",
         "user": {
             "id": new_user.id,
             "name": new_user.name,
             "role": new_user.role,
-            "password": password  # Return the plaintext password here
+            "password": password
         }
     }
 
@@ -387,7 +351,6 @@ def create_db(
             detail="Database name must be provided",
         )
 
-    # Check if the database name already exists in the Db table
     existing_db = session.exec(select(Db).where(Db.name == db_name)).first()
     if existing_db:
         raise HTTPException(
@@ -395,33 +358,28 @@ def create_db(
             detail="Database name already exists",
         )
 
-    # Ensure the ./db_user directory exists
     db_user_dir = "./db_user"
     os.makedirs(db_user_dir, exist_ok=True)
 
-    # Path to the new SQLite file
     new_db_path = os.path.join(db_user_dir, f"{db_name}.db")
 
-    # Add entry in Db table with the file path
     new_db = Db(name=db_name, creator=user_id, path=new_db_path)
     session.add(new_db)
     session.commit()
     session.refresh(new_db)
 
-    # Create a new SQLite file for the schema
     try:
         conn = sqlite3.connect(new_db_path)
         conn.execute("CREATE TABLE example_table (id INTEGER PRIMARY KEY, name TEXT)")
         conn.close()
     except Exception as e:
-        session.delete(new_db)  # Rollback Db entry if file creation fails
+        session.delete(new_db)
         session.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating new SQLite file: {str(e)}"
         )
 
-    # Link the creator user to the new database
     db_link = DbLink(user_id=user_id, db_id=new_db.id)
     session.add(db_link)
     session.commit()
@@ -478,25 +436,20 @@ def create_table_in_db(
             detail=f"Database file {db_name}.db does not exist.",
         )
 
-    # Add a default `id` column
     columns_with_id = {"id": "INTEGER PRIMARY KEY AUTOINCREMENT"}
 
-    # Process columns, parsing foreign key constraints and NOT NULL constraints
     for col, dtype in columns.items():
         dtype = dtype.strip()
         if "foreign_key" in dtype.lower():
-            # Parse foreign key definition
             base_type, foreign_key = dtype.lower().split(" foreign_key ")
             ref_table, ref_column = foreign_key.split(".")
             columns_with_id[col] = f"{base_type.upper()}, FOREIGN KEY({col}) REFERENCES {ref_table}({ref_column})"
         elif "not_null" in dtype.lower():
-            # Add NOT NULL constraint
             base_type = dtype.replace("NOT_NULL", "").strip()
             columns_with_id[col] = f"{base_type.upper()} NOT NULL"
         else:
             columns_with_id[col] = dtype.upper()
 
-    # Build SQL for table creation
     column_definitions = ", ".join([f"{col} {dtype}" for col, dtype in columns_with_id.items()])
     create_table_sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({column_definitions});'
 
@@ -504,10 +457,8 @@ def create_table_in_db(
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Enable foreign key support
         cursor.execute("PRAGMA foreign_keys = ON;")
 
-        # Check if the table already exists
         cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';")
         table_exists = cursor.fetchone()
 
@@ -629,7 +580,6 @@ def del_table(
     table_name = body.table
     user_id = payload["id"]
 
-    # Validate database registration
     db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
     if not db_entry:
         raise HTTPException(
@@ -637,7 +587,6 @@ def del_table(
             detail=f"Database {db_name} is not registered in the system.",
         )
 
-    # Validate user's access to the database
     db_link = session.exec(
         select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
     ).first()
@@ -647,7 +596,6 @@ def del_table(
             detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
         )
 
-    # Validate database file existence
     db_user_dir = "./db_user"
     db_path = os.path.join(db_user_dir, f"{db_name}.db")
     if not os.path.exists(db_path):
@@ -657,7 +605,6 @@ def del_table(
         )
 
     try:
-        # Connect to the SQLite database
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
@@ -667,7 +614,6 @@ def del_table(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Table {table_name} does not exist in database {db_name}.",
             )
-        # Safely execute the DELETE statement
         delete_sql = f'DROP TABLE IF EXISTS "{table_name}"'
         cursor.execute(delete_sql, ())
         conn.commit()
@@ -699,7 +645,6 @@ def del_entrie(
     user_id = payload["id"]
     entry_id = body.id
 
-    # Validate database registration
     db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
     if not db_entry:
         raise HTTPException(
@@ -707,7 +652,6 @@ def del_entrie(
             detail=f"Database {db_name} is not registered in the system.",
         )
 
-    # Validate user's access to the database
     db_link = session.exec(
         select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
     ).first()
@@ -717,7 +661,6 @@ def del_entrie(
             detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
         )
 
-    # Validate database file existence
     db_user_dir = "./db_user"
     db_path = os.path.join(db_user_dir, f"{db_name}.db")
     if not os.path.exists(db_path):
@@ -727,11 +670,9 @@ def del_entrie(
         )
 
     try:
-        # Connect to the SQLite database
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Validate table existence
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
         if not cursor.fetchone():
             raise HTTPException(
@@ -739,12 +680,10 @@ def del_entrie(
                 detail=f"Table {table_name} does not exist in database {db_name}.",
             )
 
-        # Safely execute the DELETE statement
         delete_sql = f"DELETE FROM {table_name} WHERE id = ?"
         cursor.execute(delete_sql, (entry_id,))
         conn.commit()
 
-        # Check if the deletion was successful
         if cursor.rowcount == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -778,7 +717,6 @@ def add_entrie(
     table_name = body.table
     user_id = payload["id"]
 
-    # Check if the database is registered in the system
     db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
     if not db_entry:
         raise HTTPException(
@@ -786,7 +724,6 @@ def add_entrie(
             detail=f"Database {db_name} is not registered in the system.",
         )
 
-    # Check if the user is linked to the database
     db_link = session.exec(
         select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
     ).first()
@@ -796,7 +733,6 @@ def add_entrie(
             detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
         )
 
-    # Path to the database file
     db_user_dir = "./db_user"
     db_path = os.path.join(db_user_dir, f"{db_name}.db")
     if not os.path.exists(db_path):
@@ -805,17 +741,14 @@ def add_entrie(
             detail=f"Database file {db_name}.db does not exist.",
         )
 
-    # Insert the data into the specified table
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Build SQL dynamically for the INSERT statement
         columns = ", ".join(body.data.keys())
         placeholders = ", ".join(["?" for _ in body.data.values()])
         insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
 
-        # Execute the SQL command
         cursor.execute(insert_sql, tuple(body.data.values()))
         conn.commit()
         last_inserted_id = cursor.lastrowid
@@ -851,7 +784,6 @@ def edit_entry(
     entry_id = body.id
     user_id = payload["id"]
 
-    # Check if the database is registered in the system
     db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
     if not db_entry:
         raise HTTPException(
@@ -859,7 +791,6 @@ def edit_entry(
             detail=f"Database {db_name} is not registered in the system.",
         )
 
-    # Check if the user is linked to the database
     db_link = session.exec(
         select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
     ).first()
@@ -869,7 +800,6 @@ def edit_entry(
             detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
         )
 
-    # Path to the database file
     db_user_dir = "./db_user"
     db_path = os.path.join(db_user_dir, f"{db_name}.db")
     if not os.path.exists(db_path):
@@ -878,12 +808,10 @@ def edit_entry(
             detail=f"Database file {db_name}.db does not exist.",
         )
 
-    # Update the entry in the specified table
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Check if the entry exists
         cursor.execute(f"SELECT * FROM {table_name} WHERE id = ?", (entry_id,))
         existing_entry = cursor.fetchone()
         if not existing_entry:
@@ -892,11 +820,9 @@ def edit_entry(
                 detail=f"Entry with ID {entry_id} does not exist in table {table_name}.",
             )
 
-        # Build SQL dynamically for the UPDATE statement
         set_clause = ", ".join([f"{key} = ?" for key in body.data.keys()])
         update_sql = f"UPDATE {table_name} SET {set_clause} WHERE id = ?"
 
-        # Execute the SQL command
         cursor.execute(update_sql, (*body.data.values(), entry_id))
         conn.commit()
         conn.close()
