@@ -197,6 +197,11 @@ class AddElementRequest(BaseModel):
     table: str
     data: Dict[str, Any]
 
+class DeleteElementRequest(BaseModel):
+    db: str
+    table: str
+    id: int
+
 @app.post("/database/add_element")
 def add_element_to_table(
     body: AddElementRequest = Body(...),
@@ -612,6 +617,85 @@ def get_table_list(
 
     return tables_with_columns
 
+@app.delete("/database/entry")
+def del_entrie(
+        session: SessionDep,
+        payload: dict = Depends(verify_token),
+        body: DeleteElementRequest = Body(...),
+):
+    db_name = body.db
+    table_name = body.table
+    user_id = payload["id"]
+    entry_id = body.id
+
+    # Validate database registration
+    db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
+    if not db_entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database {db_name} is not registered in the system.",
+        )
+
+    # Validate user's access to the database
+    db_link = session.exec(
+        select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
+    ).first()
+    if not db_link:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
+        )
+
+    # Validate database file existence
+    db_user_dir = "./db_user"
+    db_path = os.path.join(db_user_dir, f"{db_name}.db")
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database file {db_name}.db does not exist.",
+        )
+
+    try:
+        # Connect to the SQLite database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Validate table existence
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table {table_name} does not exist in database {db_name}.",
+            )
+
+        # Safely execute the DELETE statement
+        delete_sql = f"DELETE FROM {table_name} WHERE id = ?"
+        cursor.execute(delete_sql, (entry_id,))
+        conn.commit()
+
+        # Check if the deletion was successful
+        if cursor.rowcount == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Entry with id {entry_id} does not exist in table {table_name}.",
+            )
+
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error interacting with table {table_name}: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}",
+        )
+    finally:
+        conn.close()
+
+    return {"detail": "Entry successfully deleted."}
+
+
 
 @app.post("/database/entry/add")
 def add_entrie(
@@ -619,17 +703,6 @@ def add_entrie(
     payload: dict = Depends(verify_token),
     body: AddElementRequest = Body(...),
 ):
-    """
-    Add an entry to a table in a specified SQLite database after verifying user access.
-
-    Args:
-        session (SessionDep): Database session dependency.
-        payload (dict): User authentication payload.
-        body (AddElementRequest): Contains the database name, table name, and data to insert.
-
-    Returns:
-        A success message if the entry is added.
-    """
     db_name = body.db
     table_name = body.table
     user_id = payload["id"]
@@ -674,6 +747,7 @@ def add_entrie(
         # Execute the SQL command
         cursor.execute(insert_sql, tuple(body.data.values()))
         conn.commit()
+        last_inserted_id = cursor.lastrowid
         conn.close()
 
     except sqlite3.OperationalError as e:
@@ -692,6 +766,7 @@ def add_entrie(
         "database": db_name,
         "table": table_name,
         "data": body.data,
+        "entry_id": last_inserted_id
     }
 
 @app.post("/database/entry/edit")
