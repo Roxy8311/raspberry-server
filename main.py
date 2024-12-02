@@ -14,6 +14,7 @@ import sqlite3
 
 app = FastAPI()
 
+
 class User(SQLModel, table=True):
     __tablename__ = "User"
     id: int = Field(primary_key=True)
@@ -56,9 +57,11 @@ class EditEntryRequest(BaseModel):
     id: int
     data: Dict[str, Any]
 
+
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
+
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
@@ -71,22 +74,28 @@ def get_session():
     finally:
         db_session.close()
 
+
 SessionDep = Annotated[Session, Depends(get_session)]
+
 
 SECRET_KEY = "your_secret_key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 def verify_password(password: str, hashed_password: str, salt: str) -> bool:
     return pwd_context.verify(password + salt, hashed_password)
+
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 @app.on_event("startup")
 def on_startup():
@@ -151,8 +160,6 @@ def get_user_database_list(user_id: int, user_role: str, session: SessionDep):
     return database_list
 
 
-
-
 @app.get("/database")
 def get_database_user(session: SessionDep, payload: dict = Depends(verify_token)):
     user_id = payload["id"]
@@ -192,6 +199,10 @@ class EditUserPassword(BaseModel):
     old_psk: str
     new_psk: str
 
+class DeleteTableRequest(BaseModel):
+    db: str
+    table: str
+
 class AddElementRequest(BaseModel):
     db: str
     table: str
@@ -206,15 +217,6 @@ class DeleteElementRequest(BaseModel):
 def add_element_to_table(
     body: AddElementRequest = Body(...),
 ):
-    """
-    Add an element to a table in a specified SQLite database.
-
-    Args:
-        body (AddElementRequest): Contains the database name, table name, and data to insert.
-
-    Returns:
-        A success message if the element is added.
-    """
     db_user_dir = "./db_user"
     db_path = os.path.join(db_user_dir, f"{body.db_name}.db")
 
@@ -441,22 +443,11 @@ def create_table_in_db(
     session: SessionDep,
     payload: dict = Depends(verify_token),
 ):
-    """
-    Create a table inside the specified database.
-
-    Args:
-        request (CreateTableRequest): Contains db_name, table_name, and columns.
-        session (SessionDep): Database session.
-        payload (dict): The JWT payload to ensure the user is authenticated.
-
-    Returns:
-        A success message with details of the created table.
-    """
     db_name = request.db_name
     table_name = request.table_name
     columns = request.columns
 
-    if(payload['role'] == "viewer"):
+    if payload['role'] == "viewer":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="UNAUTHORIZED: You do not have permission to edit ANY database as a Viewer",
@@ -487,9 +478,20 @@ def create_table_in_db(
             detail=f"Database file {db_name}.db does not exist.",
         )
 
+    # Add a default `id` column
     columns_with_id = {"id": "INTEGER PRIMARY KEY AUTOINCREMENT"}
-    columns_with_id.update(columns)
 
+    # Process columns, parsing foreign key constraints
+    for col, dtype in columns.items():
+        if "foreign_key" in dtype.lower():
+            # Parse foreign key definition (e.g., "INTEGER Foreign_Key table.column")
+            base_type, foreign_key = dtype.lower().split(" foreign_key ")
+            ref_table, ref_column = foreign_key.split(".")
+            columns_with_id[col] = f"{base_type.upper()}, FOREIGN KEY({col}) REFERENCES {ref_table}({ref_column})"
+        else:
+            columns_with_id[col] = dtype
+
+    # Build SQL for table creation
     column_definitions = ", ".join([f"{col} {dtype}" for col, dtype in columns_with_id.items()])
     create_table_sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({column_definitions});'
 
@@ -497,6 +499,10 @@ def create_table_in_db(
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
+        # Enable foreign key support
+        cursor.execute("PRAGMA foreign_keys = ON;")
+
+        # Check if the table already exists
         cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';")
         table_exists = cursor.fetchone()
 
@@ -522,19 +528,27 @@ def create_table_in_db(
 
             if common_columns:
                 columns_str = ", ".join(common_columns)
-                cursor.execute(f'INSERT INTO "{table_name}" ({columns_str}) SELECT {columns_str} FROM "{next_table_name}";')
+                cursor.execute(
+                    f'INSERT INTO "{table_name}" ({columns_str}) SELECT {columns_str} FROM "{next_table_name}";')
 
         else:
             cursor.execute(create_table_sql)
 
         conn.commit()
-        conn.close()
-
     except sqlite3.Error as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating or updating table: {str(e)}",
+            detail=f"Database error: {str(e)}",
         )
+    finally:
+        conn.close()
+
+    return {
+        "message": "Table created successfully (or updated if it already existed)",
+        "database": db_name,
+        "table": table_name,
+        "columns": columns_with_id,
+    }
 
     return {
         "message": "Table created successfully (or updated if it already existed)",
@@ -549,18 +563,6 @@ def get_table_list(
     session: SessionDep,
     payload: dict = Depends(verify_token),
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Get a list of all tables in a specified database along with their columns.
-
-    Args:
-        db_name (str): The name of the database.
-        session (SessionDep): Database session.
-        payload (dict): The JWT payload to ensure the user is authenticated.
-
-    Returns:
-        A dictionary containing each table and its column details.
-    """
-
     statement_db = select(Db).where(Db.name == db_name)
     db = session.exec(statement_db).first()
     if db is None:
@@ -616,6 +618,76 @@ def get_table_list(
         )
 
     return tables_with_columns
+
+
+@app.delete("/database/table")
+def del_table(
+        session: SessionDep,
+        payload: dict = Depends(verify_token),
+        body: DeleteTableRequest = Body(...)
+):
+    db_name = body.db
+    table_name = body.table
+    user_id = payload["id"]
+
+    # Validate database registration
+    db_entry = session.exec(select(Db).where(Db.name == db_name)).first()
+    if not db_entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database {db_name} is not registered in the system.",
+        )
+
+    # Validate user's access to the database
+    db_link = session.exec(
+        select(DbLink).where(DbLink.user_id == user_id, DbLink.db_id == db_entry.id)
+    ).first()
+    if not db_link:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"UNAUTHORIZED: You do not have access to the database {db_name}.",
+        )
+
+    # Validate database file existence
+    db_user_dir = "./db_user"
+    db_path = os.path.join(db_user_dir, f"{db_name}.db")
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database file {db_name}.db does not exist.",
+        )
+
+    try:
+        # Connect to the SQLite database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table {table_name} does not exist in database {db_name}.",
+            )
+        # Safely execute the DELETE statement
+        delete_sql = f'DROP TABLE IF EXISTS "{table_name}"'
+        cursor.execute(delete_sql, ())
+        conn.commit()
+
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error interacting with table {table_name}: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}",
+        )
+    finally:
+        conn.close()
+
+    return {"detail": "Table successfully deleted."}
+
 
 @app.delete("/database/entry")
 def del_entrie(
@@ -775,17 +847,6 @@ def edit_entry(
     payload: dict = Depends(verify_token),
     body: EditEntryRequest = Body(...),
 ):
-    """
-    Edit an entry in a table based on its primary key (ID).
-
-    Args:
-        session (SessionDep): Database session dependency.
-        payload (dict): User authentication payload.
-        body (EditEntryRequest): Contains the database name, table name, ID, and data to update.
-
-    Returns:
-        A success message if the entry is updated.
-    """
     db_name = body.db
     table_name = body.table
     entry_id = body.id
