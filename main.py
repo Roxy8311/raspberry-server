@@ -437,7 +437,7 @@ def create_db(
     }
 
 
-@app.post("/create/table")
+@app.post("/database/table")
 def create_table_in_db(
     request: CreateTableRequest,
     session: SessionDep,
@@ -481,15 +481,20 @@ def create_table_in_db(
     # Add a default `id` column
     columns_with_id = {"id": "INTEGER PRIMARY KEY AUTOINCREMENT"}
 
-    # Process columns, parsing foreign key constraints
+    # Process columns, parsing foreign key constraints and NOT NULL constraints
     for col, dtype in columns.items():
+        dtype = dtype.strip()
         if "foreign_key" in dtype.lower():
-            # Parse foreign key definition (e.g., "INTEGER Foreign_Key table.column")
+            # Parse foreign key definition
             base_type, foreign_key = dtype.lower().split(" foreign_key ")
             ref_table, ref_column = foreign_key.split(".")
             columns_with_id[col] = f"{base_type.upper()}, FOREIGN KEY({col}) REFERENCES {ref_table}({ref_column})"
+        elif "not_null" in dtype.lower():
+            # Add NOT NULL constraint
+            base_type = dtype.replace("NOT_NULL", "").strip()
+            columns_with_id[col] = f"{base_type.upper()} NOT NULL"
         else:
-            columns_with_id[col] = dtype
+            columns_with_id[col] = dtype.upper()
 
     # Build SQL for table creation
     column_definitions = ", ".join([f"{col} {dtype}" for col, dtype in columns_with_id.items()])
@@ -550,12 +555,6 @@ def create_table_in_db(
         "columns": columns_with_id,
     }
 
-    return {
-        "message": "Table created successfully (or updated if it already existed)",
-        "database": db_name,
-        "table": table_name,
-        "columns": columns_with_id,
-    }
 
 @app.get("/database/get_table", response_model=Dict[str, List[Dict[str, Any]]])
 def get_table_list(
