@@ -64,6 +64,24 @@ uvicorn main:app --reload
 Access the API documentation at `http://127.0.0.1:8000/docs`.
 
 ---
+## Database datatypes :
+1. If the declared type contains the string "INT" then it is assigned INTEGER affinity.
+
+2. If the declared type of the column contains any of the strings "CHAR", "CLOB", or "TEXT" then that column has TEXT affinity. Notice that the type VARCHAR contains the string "CHAR" and is thus assigned TEXT affinity.
+
+3. If the declared type for a column contains the string "BLOB" or if no type is specified then the column has affinity BLOB.
+
+4. If the declared type for a column contains any of the strings "REAL", "FLOA", or "DOUB" then the column has REAL affinity.
+
+5. Otherwise, the affinity is NUMERIC.
+
+|                **Example Typenames From the  CREATE TABLE Statement  or CAST Expression**                | **Resulting Affinity** | **Rule Used to Determine Affinity** |
+|:--------------------------------------------------------------------------------------------------------:|:----------------------:|-------------------------------------|
+|                 INT INTEGER TINYINT SMALLINT MEDIUMINT BIGINT UNSIGNED BIG INT INT2 INT8                 |         INTEGER        |                  1                  |
+| CHARACTER(20) VARCHAR(255) VARYING CHARACTER(255) NCHAR(55) NATIVE CHARACTER(70) NVARCHAR(100) TEXT CLOB |          TEXT          |                  2                  |
+|                                        BLOB no datatype specified                                        |          BLOB          |                  3                  |
+|                                    REAL DOUBLE DOUBLE PRECISION FLOAT                                    |          REAL          |                  4                  |
+|                                NUMERIC DECIMAL(10,5) BOOLEAN DATE DATETIME                               |         NUMERIC        |                  5                  |
 
 ## API Endpoints
 
