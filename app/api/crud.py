@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+Secret_key = "SECRETTT"
+
 async def get_user(id: int):
     query = users.select().where(users.c.id == id)
     return await database.fetch_one(query=query)
@@ -85,7 +87,7 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
-def verify_jwt_token(token: str, secret_key: str):
+def verify_jwt_token(token: str, secret_key: str = Secret_key):
     try:
         payload = jwt.decode(token, secret_key, algorithms=["HS256"])
         return {"valid": True, "user_id": payload.get("id"), "role": payload.get("role")}
@@ -95,7 +97,7 @@ def verify_jwt_token(token: str, secret_key: str):
         return {"valid": False, "error": "Invalid token"}
 
 
-async def create_jwt_token(user_id: int, user_name: str, user_role: str, secret_key: str, expires_in: int = 24) -> str:
+async def create_jwt_token(user_id: int, user_name: str, user_role: str, secret_key: str = Secret_key, expires_in: int = 24) -> str:
     expire_time = datetime.utcnow() + timedelta(hours=expires_in)
     payload = {
         "sub": user_name,
