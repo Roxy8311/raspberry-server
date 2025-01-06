@@ -8,8 +8,6 @@ class Config:
 class UserSchema(BaseModel):
     name: str = Field(..., min_length=3, max_length=50)
     role: str = Field(..., min_length=3, max_length=50)
-    hash: str = Field(..., min_length=3, max_length=50)
-    salt: str = Field(..., min_length=3, max_length=50)
 
 class DatabaseSchema(BaseModel):
     name: str = Field(..., min_length=3, max_length=50)

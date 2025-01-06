@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import application, databases
+from app.api import application
+# from app.api import databases
 from app.db import engine, metadata, database
 
 metadata.create_all(engine)
@@ -37,4 +38,4 @@ async def db():
 
 
 app.include_router(application.router)
-app.include_router(databases.router, prefix="/notes", tags=["notes"])
+# app.include_router(databases.router, prefix="/notes", tags=["notes"])

@@ -20,8 +20,7 @@ users = Table(
     Column("id", Integer, primary_key=True),
     Column("name", String(50)),
     Column("role", String(50), default="user"),
-    Column("hash",String(50)),
-    Column("salt", String(50))
+    Column("hash",String(50))
 )
 
 databases = Table(
