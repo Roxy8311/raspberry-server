@@ -35,3 +35,8 @@ class DatabaseDB(DatabaseSchema):
 
 class TokenSchema(BaseModel):
     token: str
+
+class UserNoHash(BaseModel):
+    name: str
+    role: str
+    id: int

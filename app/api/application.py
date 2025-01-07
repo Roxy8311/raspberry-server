@@ -1,36 +1,44 @@
-from typing import Optional
+from typing import Optional, List
+from urllib import request
 
 from fastapi import APIRouter, HTTPException, Path, Depends, Request
 import jwt
 
 from app.api import crud
 from app.api.crud import verify_password
-from app.api.models import TokenSchema, UserSchema, UserDB, DatabaseSchema, DatabaseDB, DbLinksSchema, DbLinksDB
+from app.api.models import UserNoHash, TokenSchema, UserSchema, UserDB, DatabaseSchema, DatabaseDB, DbLinksSchema, DbLinksDB
 
 router = APIRouter()
 
 
-def get_jwt_token_from_header(request: Request) -> Optional[str]:
+def verify_token(request: Request):
     authorization_header = request.headers.get("Authorization")
-    if authorization_header and authorization_header.startswith("Bearer "):
-        return authorization_header[7:]
-    return None
+    if not authorization_header and authorization_header.startswith("Bearer "):
+        return False
+    verify = crud.verify_jwt_token(authorization_header[7:])
+    return verify["valid"]
 
-@router.get("/test_bearer", status_code=200)
-async def get_bearer(request: Request):
-    token = get_jwt_token_from_header(request)
-    if not token:
+
+@router.get("/user/{id}", response_model=UserNoHash, status_code=200)
+async def get_user(request: Request, id: int = Path(..., gt=0)):
+    if not verify_token(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    else:
-        verify = crud.verify_jwt_token(token)
-        return verify["valid"]
 
-@router.get("/user/{id}", response_model=UserDB, status_code=200)
-async def get_user(id: int = Path(..., gt=0)):
     user = await crud.get_user(id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
     return user
+
+
+@router.get("/users", response_model=List[UserNoHash], status_code=200)
+async def get_all_user(request: Request):
+    if not verify_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    users = await crud.get_all_users()
+    return [UserNoHash(**dict(user)) for user in users]
+
 
 @router.post("/hash", status_code=200)
 async def test(request: Request):
@@ -38,12 +46,7 @@ async def test(request: Request):
     hash = crud.hash_password(body["password"])
     return {"hash": hash}
 
-@router.post("/check_token", status_code=200)
-async def check_token(request: Request):
-    body = await request.json()
-    token = body["token"]
-    result = crud.verify_jwt_token(token)
-    return result["valid"]
+
 @router.post("/login", response_model=TokenSchema, status_code=200)
 async def login(request: Request):
     body = await request.json()
@@ -62,10 +65,3 @@ async def login(request: Request):
 
     token = await crud.create_jwt_token(user_id=user["id"], user_name=user["name"], user_role=user["role"])
     return {"token": token}
-
-@router.post("/test_token", status_code=200)
-async def test_token(request: Request):
-    body = await request.json()
-    token = body["token"]
-    result = await crud.retrieve_token_data(token)
-    return result
