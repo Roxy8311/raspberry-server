@@ -106,3 +106,7 @@ async def create_jwt_token(user_id: int, user_name: str, user_role: str, secret_
         "exp": expire_time
     }
     return jwt.encode(payload, secret_key, algorithm="HS256")
+
+async def retrieve_token_data(token: str):
+    jwt_data = jwt.decode(token, Secret_key, algorithms=["HS256"])
+    return jwt_data

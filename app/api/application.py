@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Path, Depends, Request
 import jwt
 
@@ -6,6 +8,22 @@ from app.api.crud import verify_password
 from app.api.models import TokenSchema, UserSchema, UserDB, DatabaseSchema, DatabaseDB, DbLinksSchema, DbLinksDB
 
 router = APIRouter()
+
+
+def get_jwt_token_from_header(request: Request) -> Optional[str]:
+    authorization_header = request.headers.get("Authorization")
+    if authorization_header and authorization_header.startswith("Bearer "):
+        return authorization_header[7:]
+    return None
+
+@router.get("/test_bearer", status_code=200)
+async def get_bearer(request: Request):
+    token = get_jwt_token_from_header(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    else:
+        verify = crud.verify_jwt_token(token)
+        return verify["valid"]
 
 @router.get("/user/{id}", response_model=UserDB, status_code=200)
 async def get_user(id: int = Path(..., gt=0)):
@@ -25,7 +43,7 @@ async def check_token(request: Request):
     body = await request.json()
     token = body["token"]
     result = crud.verify_jwt_token(token)
-    return result
+    return result["valid"]
 @router.post("/login", response_model=TokenSchema, status_code=200)
 async def login(request: Request):
     body = await request.json()
@@ -44,3 +62,10 @@ async def login(request: Request):
 
     token = await crud.create_jwt_token(user_id=user["id"], user_name=user["name"], user_role=user["role"])
     return {"token": token}
+
+@router.post("/test_token", status_code=200)
+async def test_token(request: Request):
+    body = await request.json()
+    token = body["token"]
+    result = await crud.retrieve_token_data(token)
+    return result
