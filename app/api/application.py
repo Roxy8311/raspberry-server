@@ -1,3 +1,4 @@
+from http.client import responses
 from typing import Optional, List
 from urllib import request
 
@@ -65,3 +66,38 @@ async def login(request: Request):
 
     token = await crud.create_jwt_token(user_id=user["id"], user_name=user["name"], user_role=user["role"])
     return {"token": token}
+
+
+@router.get("/database/{id}", response_model=DatabaseSchema, status_code=200)
+async def get_database(request: Request, id: int = Path(..., gt=0)):
+    if not verify_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    database = await crud.get_database(id)
+    if not database:
+        raise HTTPException(status_code=404, detail="Database not found")
+    return database
+
+
+@router.get("/databases", response_model=List[DatabaseSchema], status_code=200)
+async def get_all_databases(request: Request):
+    if not verify_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    authorization_header = request.headers.get("Authorization")
+    token_info = await crud.retrieve_token_data(authorization_header[7:])
+
+    if token_info["role"] != "admin":
+        links = await crud.get_db_links_user(token_info["id"])
+    else:
+        links = await crud.get_all_db_links()
+
+    databases = []
+    seen_ids = set()
+
+    for link in links:
+        db_data = await crud.get_database(link["db_id"])
+        if db_data["id"] not in seen_ids:
+            seen_ids.add(db_data["id"])
+            databases.append(db_data)
+
+    return [DatabaseSchema(**db_data) for db_data in databases]

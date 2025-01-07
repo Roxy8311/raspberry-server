@@ -11,6 +11,7 @@ class UserSchema(BaseModel):
     hash: str = Field(..., min_length=3, max_length=100)
 
 class DatabaseSchema(BaseModel):
+    id: int
     name: str = Field(..., min_length=3, max_length=50)
     creator: int
 

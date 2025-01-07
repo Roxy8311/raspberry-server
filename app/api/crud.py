@@ -64,6 +64,10 @@ async def get_db_links_user(user_id: int):
     query = dbLinks.select().where(dbLinks.c.user_id == user_id)
     return await database.fetch_all(query=query)
 
+async def get_all_db_links():
+    query = dbLinks.select()
+    return await database.fetch_all(query=query)
+
 async def get_db_links_db(db_id: int):
     query = dbLinks.select().where(dbLinks.c.db_id == db_id)
     return await database.fetch_all(query=query)
