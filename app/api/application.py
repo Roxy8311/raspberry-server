@@ -101,3 +101,70 @@ async def get_all_databases(request: Request):
             databases.append(db_data)
 
     return [DatabaseSchema(**db_data) for db_data in databases]
+
+
+@router.post("/database/link", response_model=DbLinksSchema, status_code=201)
+async def link_user_to_database(request: Request):
+    body = await request.json()
+
+    if not verify_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    authorization_header = request.headers.get("Authorization")
+    token_info = await crud.retrieve_token_data(authorization_header[7:])
+
+    target_user = await crud.get_user(body["user_id"])
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Target User not found")
+
+    target_db = await crud.get_database(body["db_id"])
+    if not target_db:
+        raise HTTPException(status_code=404, detail="Target Database not found")
+
+    test_link = await crud.get_db_links(body["user_id"], body["db_id"])
+    if test_link:
+        raise HTTPException(status_code=403, detail="User already linked to this database")
+
+    if token_info["role"] != "admin":
+        link = await crud.get_db_links(token_info["user_id"], body["db_id"])
+        if not link:
+            raise HTTPException(status_code=403,
+                                detail="Forbidden: Only admins and already linked users can link new users to databases")
+
+    try:
+        created_link_id = await crud.link_user_to_database(body["user_id"], body["db_id"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error linking user to database: {str(e)}")
+
+    created_link = {
+        "id": created_link_id,
+        "user_id": body["user_id"],
+        "db_id": body["db_id"],
+    }
+
+    return DbLinksSchema(**created_link)
+
+
+@router.post("/database", response_model=DatabaseDB, status_code=201)
+async def create_database(request: Request, database: DatabaseSchema):
+    if not verify_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    authorization_header = request.headers.get("Authorization")
+    token_info = await crud.retrieve_token_data(authorization_header[7:])
+
+    if token_info["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Only admins can create databases")
+
+    try:
+        database_id = await crud.post_database(database)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating database: {str(e)}")
+
+    created_database = {
+        "id": database_id,
+        "name": database.name,
+        "creator": database.creator,
+    }
+
+    return DatabaseDB(**created_database)

@@ -72,6 +72,10 @@ async def get_db_links_db(db_id: int):
     query = dbLinks.select().where(dbLinks.c.db_id == db_id)
     return await database.fetch_all(query=query)
 
+async def get_db_links(user_id: int, db_id: int):
+    query = dbLinks.select().where(dbLinks.c.user_id == user_id).where(dbLinks.c.db_id == db_id)
+    return await database.fetch_one(query=query)
+
 async def post_db_links(payload: DbLinksDB):
     query = dbLinks.insert().values(user_id=payload.user_id, db_id=payload.db_id)
     return await database.execute(query=query)
@@ -114,3 +118,8 @@ async def create_jwt_token(user_id: int, user_name: str, user_role: str, secret_
 async def retrieve_token_data(token: str):
     jwt_data = jwt.decode(token, Secret_key, algorithms=["HS256"])
     return jwt_data
+
+
+def link_user_to_database(user_id, db_id):
+    query = dbLinks.insert().values(user_id=user_id, db_id=db_id)
+    return database.execute(query=query)

@@ -16,7 +16,8 @@ class DatabaseSchema(BaseModel):
     creator: int
 
 class DbLinksSchema(BaseModel):
-    user_id: int = Field(..., min_length=3, max_length=50)
+    id: int
+    user_id: int
     db_id: int
 
 class DbLinksDB(DbLinksSchema):
